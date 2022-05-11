@@ -227,7 +227,7 @@ class Training:
 
         """
     def __init__(self, gen, critic, seed, torch_seed,tgt_name, inps,labels, vectors,z_dim,
-                 batch_size, res_train , opt_gen, opt_critic,use_same_size_batching = True,noise_mean = None, noise_std=None,
+                 batch_size, res_train , opt_gen, opt_critic,use_same_size_batching = True,
                  inps_valid=None, labels_valid=None, vectors_valid=None,
                  pre_res_train = None, pre_res_valid=None, pre_batch_size = None, pre_opt_gen=None, pre_criterion=None, plot_mean_comparison_to = None ):
 
@@ -259,10 +259,10 @@ class Training:
             self.lens_valid = torch.Tensor(np.array(inps_valid.apply(lambda x: len(x)), dtype=int)).to(self.device)
         
         self.z_dim = z_dim
-        if noise_mean is None:
-            self.noise_mean = np.zeros(z_dim)
-        if noise_std is None:
-            self.noise_std = np.eye(z_dim)
+        #if noise_mean is None:
+        #    self.noise_mean = np.zeros(z_dim)
+        #if noise_std is None:
+        #    self.noise_std = np.eye(z_dim)
         
         self.batch_size = batch_size
         self.pre_batch_size = pre_batch_size
@@ -277,7 +277,7 @@ class Training:
             
         self.plot_mean_comparison_to = plot_mean_comparison_to
         
-        self.decomposition_matrix, self.decomposition = get_decomposition_matrix(self.noise_std)
+        #self.decomposition_matrix, self.decomposition = get_decomposition_matrix(self.noise_std)
 
         # is using same size batching we create a dictionary containing all unique lengths and the indices of each sample with a this length
         if use_same_size_batching:
@@ -296,8 +296,8 @@ class Training:
             self.fixed_batch = self.create_epoch_batches(len(self.inps), batch_size=self.batch_size, same_size_batching=True)[0]
             self.fixed_vectors = self.vectors[self.fixed_batch]
             self.fixed_lens = self.lens[self.fixed_batch]
-            #self.fixed_noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in self.fixed_lens])
-            self.fixed_noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(self.fixed_len)])
+            self.fixed_noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in self.fixed_lens])
+            #self.fixed_noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(self.fixed_lens)])
             self.fixed_noise = pad_batch_online(self.fixed_lens, self.fixed_noise , self.device)
             self.fixed_reals = self.inps.iloc[self.fixed_batch]
             self.fixed_reals = pad_batch_online(self.fixed_lens, self.fixed_reals, self.device)
@@ -305,8 +305,8 @@ class Training:
         else:
             self.fixed_vectors =self.vectors[np.asarray(self.labels == self.plot_mean_comparison_to)]
             self.fixed_lens = self.lens[np.asarray(self.labels == self.plot_mean_comparison_to)]
-            #self.fixed_noise = [torch.randn(int(l.item()), self.z_dim,device=self.device) for l in self.fixed_lens]
-            self.fixed_noise = [np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _, l in enumerate(self.fixed_len)]
+            self.fixed_noise = [torch.randn(int(l.item()), self.z_dim,device=self.device) for l in self.fixed_lens]
+            #self.fixed_noise = [np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _, l in enumerate(self.fixed_lens)]
             self.fixed_reals = self.inps.iloc[np.asarray(labels == self.plot_mean_comparison_to)]
 	    	
 
@@ -465,12 +465,12 @@ class Training:
                     lens_input_jj = self.lens[idxs]
                     for _ in range(critic_iteration):
                         cur_batch_size = len(idxs)
-                        #noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
-                        noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
+                        noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
+                        #noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
                         del noise
     
-                    #noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
-                    noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
+                    noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
+                    #noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
                     del noise
             gc.collect()
             if torch.cuda.is_available():
@@ -514,8 +514,8 @@ class Training:
                         #with torch.backends.cudnn.flags(enabled=False):
                         self.opt_critic.zero_grad()
                         #noise = torch.randn(cur_batch_size, 1, self.z_dim).to(self.device)
-                        #noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
-                        noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
+                        noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
+                        #noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
                         noise = pad_batch_online(lens_input_jj, noise, device = self.device)
                         #print("Critic Noise", round(torch.cuda.memory_allocated(0)/1024**3,1))
                         
@@ -574,8 +574,8 @@ class Training:
                 self.opt_gen.zero_grad()
                 #noise = torch.randn(cur_batch_size, 1, self.z_dim).to(self.device)
                 
-                #noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
-                noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
+                noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
+                #noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
                 noise = pad_batch_online(lens_input_jj, noise, device = self.device)
                 
                 with torch.backends.cudnn.flags(enabled=False):
@@ -694,8 +694,8 @@ class Training:
                 lens_input_jj = self.lens_valid[idxs]
                 vectors_jj = self.vectors_valid[idxs]
 
-                #noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
-                noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
+                noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
+                #noise = pd.Series([np.asarray([sample_multivariate_normal(self.noise_mean, self.decomposition_matrix, self.decomposition) for x in range(int(l.item()))]) for _,l in enumerate(lens_input_jj)])
                 noise = pad_batch_online(lens_input_jj, noise, device = self.device)
 
                 batch_real = self.inps_valid.iloc[idxs]
