@@ -228,7 +228,7 @@ class Training:
         """
     def __init__(self, gen, critic, seed, torch_seed,tgt_name, inps,labels, vectors,z_dim,
                  batch_size, res_train , opt_gen, opt_critic,use_same_size_batching = True,
-                 inps_valid=None, labels_valid=None, vectors_valid=None,
+                 inps_valid=None, labels_valid=None, vectors_valid=None, burn_in_res_train=None,
                  pre_res_train = None, pre_res_valid=None, pre_batch_size = None, pre_opt_gen=None, pre_criterion=None, plot_mean_comparison_to = None ):
 
         self.seed = seed
@@ -274,6 +274,10 @@ class Training:
         self.pre_res_valid = pre_res_valid
         if pre_res_valid is not None:
             self.pre_res_valid_ix = len(pre_res_valid)
+
+        self.burn_in_res_train = burn_in_res_train
+        if burn_in_res_train is not None:
+            self.burn_in_res_train_ix = len(burn_in_res_train)
             
         self.plot_mean_comparison_to = plot_mean_comparison_to
         
@@ -412,6 +416,125 @@ class Training:
 
         return epoch
 
+    def burn_in(self, num_epochs,
+                lambda_gp,
+                continue_training_from,
+                save_model_after_i_iterations=1,
+                shuffle=True,
+                verbose=True,
+                dict_file="",
+                file_to_store= time.strftime("%Y%m%d-%H%M%S")):
+
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+        if continue_training_from > 0:
+            print("Continue Burn in: iteration %d..." % continue_training_from)
+            for i in range(continue_training_from):
+                epoch = self.create_epoch_batches(len(self.inps), self.batch_size, shuffle=shuffle,                                               same_size_batching=self.use_same_size_batching)
+                for jj, idxs in enumerate(epoch):
+                    lens_input_jj = self.lens[idxs]
+                    noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
+                    del noise
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        else:
+            print("Start Burn in... ")
+
+
+
+        for ii in tqdm(range(num_epochs), desc='Training...', position=0, leave=True):
+            ii += continue_training_from
+            epoch = self.create_epoch_batches(len(self.inps), self.batch_size, shuffle=shuffle,
+                                              same_size_batching=self.use_same_size_batching)
+
+            w_loss_list = []
+            loss_critic_list = []
+            critic_fake_list = []
+            critic_real_list = []
+
+            for jj, idxs in enumerate(tqdm(epoch, desc="Batch...", position=1, leave=False)):
+                cur_time = time.time()
+                lens_input_jj = self.lens[idxs]
+                real = self.inps.iloc[idxs]
+                real = pad_batch_online(lens_input_jj, real, self.device)
+                vectors_jj = self.vectors[idxs]
+
+                self.opt_critic.zero_grad()
+                # noise = torch.randn(cur_batch_size, 1, self.z_dim).to(self.device)
+                noise = pd.Series([torch.randn(int(l.item()), self.z_dim) for l in lens_input_jj])
+                noise = pad_batch_online(lens_input_jj, noise, device=self.device)
+                # print("Critic Noise", round(torch.cuda.memory_allocated(0)/1024**3,1))
+
+                with torch.backends.cudnn.flags(enabled=False):
+                    fake = self.gen(noise, lens_input_jj, vectors_jj)
+
+                    critic_real = self.critic(real, lens_input_jj, vectors_jj).reshape(-1)
+                    critic_fake = self.critic(fake, lens_input_jj, vectors_jj).reshape(-1)
+
+                    critic_diff = critic_real - critic_fake
+                    loss_diff = torch.mean(critic_diff)
+
+                    gp = self.gradient_penalty(self.critic, lens_input_jj, vectors_jj, real, fake,
+                                               device=self.device)
+
+                    was_loss = -loss_diff + lambda_gp * gp  # - critic_diff_std
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                    was_loss.backward()
+                    self.opt_critic.step()
+
+                    del noise
+                    del gp
+                    del fake
+                    del critic_diff
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                    # print("Critic Iteration", round(torch.cuda.memory_allocated(0)/1024**3,1))
+
+            loss_critic_list += [loss_diff.item()]
+            w_loss_list += [was_loss.item()]
+            critic_fake_list += [torch.mean(critic_fake).item()]
+            critic_real_list += [torch.mean(critic_real).item()]
+
+
+            del was_loss
+            del loss_diff
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            cur_time = time.time() - cur_time
+
+            mean_loss_critic = np.mean(loss_critic_list)
+            mean_loss_was = np.mean(w_loss_list)
+            mean_loss_fake = np.mean(critic_fake_list)
+            mean_loss_real = np.mean(critic_real_list)
+
+            self.burn_in_res_train.loc[self.burn_in_res_train_ix] = [ii, mean_loss_critic, mean_loss_fake,mean_loss_real, mean_loss_was]
+            self.burn_in_res_train_ix += 1
+
+            if verbose:
+                print(f"Epoch [{ii}/{num_epochs}]  \
+                    Loss Critic: {mean_loss_critic:.4f},Loss Fake: {mean_loss_fake:.4f},Loss Real: {mean_loss_real:.4f}, Wasser Loss: {mean_loss_was:.4f}")
+                print('Time Taken: {:.4f} seconds. Estimated {:.4f} hours remaining'.format(cur_time,
+                            (num_epochs - ii) * (cur_time) / 3600))
+                print(f'Memory Usage:{ii}')
+                print('Allocated:', round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1), 'GB')
+                print('Cached:   ', round(torch.cuda.memory_reserved(0) / 1024 ** 3, 1), 'GB')
+
+            if (ii + 1) % save_model_after_i_iterations == 0:
+                self.burn_in_res_train.to_pickle(dict_file + "/burn_in_res_train_" + file_to_store + "_%d" % (ii + 1) + ".pkl")
+                with open(dict_file + "/burn_in_critic_" + file_to_store + "_%d" % (ii + 1) + ".pkl", "wb") as pfile:
+                    pickle.dump((self.critic, self.opt_critic), pfile)
 
     def train(self, num_epochs,
               continue_training_from,
