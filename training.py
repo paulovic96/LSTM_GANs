@@ -6,12 +6,28 @@ import random
 import gc
 import matplotlib.pyplot as plt
 import pickle
-from tqdm import tqdm
-tqdm.pandas()
 
 from util import *
 from matplotlib.lines import Line2D
 
+
+def isnotebook():
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False      # Probably standard Python interpreter
+
+if isnotebook():
+    from tqdm.notebook import tqdm
+else:
+    from tqdm import tqdm
+tqdm.pandas()
 
 def plot_fake_mels(gen, fixed_noise,fixed_real,fixed_vector,labels,
                    epoch_ii,plot_save_after_i_iterations,
@@ -610,6 +626,8 @@ class Training:
             epoch = self.create_epoch_batches(len(self.inps), self.batch_size, shuffle=shuffle, same_size_batching=self.use_same_size_batching)
 
             loss_gen_list = []
+            loss_gen_vel_list = []
+            loss_gen_jerk_list = []
             w_loss_list = []
             loss_critic_list = []
             critic_fake_list = []
@@ -709,9 +727,11 @@ class Training:
                     critic_real = self.critic(real, lens_input_jj, vectors_jj).reshape(-1)
                     #print("Critic Evaluation", round(torch.cuda.memory_allocated(0)/1024**3,1))
                     
-                    #critic_diff = critic_fake - critic_real
+                    critic_diff = critic_real - critic_fake
+                    loss_diff = torch.mean(critic_diff)
                     velocity_loss, jerk_loss = velocity_jerk_loss(fake, rmse_loss)
-                    loss_gen = -torch.mean(critic_fake) + velocity_loss + jerk_loss  # + critic_diff_std
+                    #loss_gen = -torch.mean(critic_fake) + velocity_loss + jerk_loss  # + critic_diff_std
+                    loss_gen = loss_diff + velocity_loss + jerk_loss  # + critic_diff_std
                     # critic_diff_std = torch.std(critic_real) - torch.std(gen_fake)
                     #print("Generator Loss", round(torch.cuda.memory_allocated(0)/1024**3,1))
 
@@ -724,7 +744,8 @@ class Training:
 
                     del noise
                     del real 
-                    del fake 
+                    del fake
+
                     gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
@@ -732,13 +753,19 @@ class Training:
                 
                 
                 
-                loss_gen_list += [loss_gen.item()] 
+                loss_gen_list += [loss_gen.item()]
+                loss_gen_vel_list += [velocity_loss.item()]
+                loss_gen_jerk_list += [jerk_loss.item()]
                 critic_fake_list += [torch.mean(critic_fake).item()]
                 critic_real_list += [torch.mean(critic_real).item()]
 
                 del loss_gen
+                del loss_diff
+                del critic_diff
                 del critic_fake
-                del critic_real 
+                del critic_real
+                del jerk_loss
+                del velocity_loss
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -763,14 +790,20 @@ class Training:
             mean_loss_critic = np.mean(loss_critic_list)
             mean_loss_gen = np.mean(loss_gen_list)
             mean_loss_was = np.mean(w_loss_list)
+
+            mean_critic_fake = np.mean(critic_fake_list)
+            mean_critic_real = np.mean(critic_real_list)
+
+            mean_loss_vel = np.mean(loss_gen_vel_list)
+            mean_loss_jerk = np.mean(loss_gen_jerk_list)
             
 
-            self.res_train.loc[self.res_train_ix] = [ii, mean_loss_critic, mean_loss_gen, mean_loss_was]
+            self.res_train.loc[self.res_train_ix] = [ii, mean_loss_critic, mean_loss_gen, mean_loss_was, mean_critic_real,mean_critic_fake, mean_loss_vel, mean_loss_jerk]
             self.res_train_ix += 1
 
             if verbose:
                 print(f"Epoch [{ii}/{num_epochs+continue_training_from}]  \
-                              Loss Critic: {mean_loss_critic:.4f},Loss Generator: {mean_loss_gen:.4f},  Wasser Loss: {mean_loss_was:.4f}")
+                              Loss Critic: {mean_loss_critic:.4f},Loss Generator: {mean_loss_gen:.4f},  Wasser Loss: {mean_loss_was:.4f}, Critic Real: {mean_critic_real:.4f}, Critic Fake: {mean_critic_fake:.4f} , Vel Loss {mean_loss_vel:.4f}, Jerk Loss {mean_loss_jerk:.4f}")
                 print('Time Taken: {:.4f} seconds. Estimated {:.4f} hours remaining'.format(cur_time, ((num_epochs+continue_training_from)-ii)*(cur_time)/3600))
                 print(f'Memory Usage:{ii}')
                 print('Allocated:', round(torch.cuda.memory_allocated(0)/1024**3,1), 'GB')
